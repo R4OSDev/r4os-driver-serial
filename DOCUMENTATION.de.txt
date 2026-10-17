@@ -1,0 +1,65 @@
+SERIAL.R4D 0.1.0
+
+Rolle und Grenze
+16550-kompatible UARTs liegen in diesem externen Treiber. R4DEV vermittelt
+einen dynamischen Katalog, exklusive prozessgenaue Handles, Abbruch und
+ereignisgesteuerte Warteaufrufe. Es gibt keine feste Grenze von zwei Ports.
+Kernel 0.1.321 / DriverApi 37 und SDK 0.64.35 werden benoetigt.
+
+Ressourcen
+Ohne Option werden deklarierte ISA-Ressourcen COM1=3f8/IRQ4, COM2=2f8/IRQ3,
+COM3=3e8/IRQ4, COM4=2e8/IRQ3 geprueft. Fehlende UARTs erscheinen nicht im
+Katalog. Eine aktive Kernel-Debugreservierung von COM1 verbietet sogar
+Probezugriffe. Erst nach erfolgreicher Debugfreigabe darf der Treiber den
+UART beim Oeffnen konfigurieren. Fruehe Kernel-Bootausgabe bleibt erhalten.
+
+OPTION SERIAL ports=1:3f8:4,2:2f8:3,3:3e8:4,4:2e8:3,5:3a8:5
+OPTION SERIAL ports=none
+OPTION SERIAL clock=115200
+OPTION SERIAL pci=9:P:0:0:5:0:0:0:11:0:1
+
+Syntax IO: COMnummer:HexBasis:IRQ.
+Syntax PCI: COMnummer:P:Busart:Bus:Device:Function:BAR:HexOffset:IRQ:Shift:Breite.
+PCI verlangt die genaue vorhandene BDF, UART-Klasse 7/Unterklasse 0 oder 2,
+bestaetigten BAR und dieselbe Interruptleitung. PIO braucht Shift 0/Breite 1;
+MMIO erlaubt Breite 1 oder ausgerichtete 32-Bit-Register mit Shift >= 2.
+PCI-Dekodierung wird erst nach Zulassung aktiviert; kein Busmaster-DMA.
+IRQ 0, 1 und 12 bleiben anderen Plattformgeraeten vorbehalten. Ein gemeinsamer
+Handler pro Leitung bedient alle zugeordneten UARTs. Die vorhandene
+CONFIG.R4S-Optionslaenge bleibt 47 Nutzzeichen; das ist keine API-Portgrenze.
+Die Hardwareidentitaet stammt aus IO-Basis bzw. PCI-BDF/BAR/Offset, die
+COMnummer aus der Deklaration. Freie Listenplaetze vergeben keine Nummern.
+Generische PCI-/ACPI-Erkennung, USB-Serial und Hotplug sind nicht Teil davon.
+
+Datensemantik
+Baudraten muessen sich durch den deklarierten Baudbasistakt exakt teilen
+lassen. 5..8 Datenbits, keine/ungerade/gerade/Mark/Space-Paritaet, 1 oder 2
+Stopbits und optional Softwaresteuerung von RTS/CTS werden unterstuetzt.
+Bei 5 Datenbits bedeutet die UART-Einstellung mit zwei Stopbits 1,5 Bit.
+Der Treiber veraendert keine Nutzbytes. Jede Instanz besitzt eigene residente
+RX- und TX-Ringe mit je 4096 Bytes. Read liefert verfuegbare Bytes; Write
+bestaetigt die Aufnahme in die Softwarequeue. Erst Drain wartet zusaetzlich
+auf leeren Hardwaresender (THRE und TEMT), nicht auf eine Gegenstellenquittung.
+Timeouts und Fehler erhalten den genauen bereits uebertragenen Teilumfang.
+RX-Ueberlauf verwirft neue Bytes, meldet Verlust und behaelt alte Nutzdaten.
+Zaehler erfassen beobachtete Software-/UART-Ereignisse, keine unbekannten
+Verluste einer Gegenstelle oder eines Hardware-FIFOs.
+
+Callbacks und IRQs warten nicht und halten keinen Kernelbesitzer. Eine
+IRQ-Bedienung ist begrenzt; nach 64 weiterhin anstehenden Ursachen wird die
+Instanz als Hardwarefehler stillgelegt. Dieser Fehler wird sichtbar gemeldet,
+statt eine Endlosschleife oder einen unquittierten Hintergrundauftrag zu
+erzeugen. Wiederaufnahme erfolgt nach erfolgreichem Schliessen und Oeffnen.
+
+Lebensdauer
+Ein fehlgeschlagenes Close behaelt das genaue Handle und den UART-Besitz.
+Abort verwirft die eigene Softwarequeue mit Verlustzaehler; auch dann bleibt
+der echte physische Senderstillstand Voraussetzung fuer die Freigabe.
+Prozess-/Treiberende schliesst neue Zugriffe, weckt betroffene Warteaufrufe
+und behaelt Ressourcen bis zu den wirklichen Abschlussquittungen. Der Treiber
+meldet Ports ab, entfernt IRQs und gibt erst danach residenten Speicher frei.
+Fehler im Abbau bleiben ein Fehler und werden nicht als Freigabe ausgegeben.
+
+Build
+Build.sh unter Linux, Build.bat unter Windows; gemeinsame Logik in Build.ps1.
+Settings.R4S enthaelt ausschliesslich relative Workspacepfade.
