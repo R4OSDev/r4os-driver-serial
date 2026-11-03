@@ -1,5 +1,7 @@
-SDK_ROOT=../../SDK
+﻿SDK_ROOT=../../SDK
 CONTRACT_ROOT=../../Contract
 DEVKIT_ROOT=../../../DevKit
 ARTIFACTS_ROOT=../../../Artifacts/Modules/Serial
 ZIG_ROOT=Toolchains/Zig
+
+LIBRARIES_ROOT=../../Libraries

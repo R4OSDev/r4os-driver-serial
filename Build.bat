@@ -1,3 +1,3 @@
 @echo off
-pwsh -NoLogo -NoProfile -File "%~dp0Build.ps1" %*
-exit /b %errorlevel%
+pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Build.ps1" %*
+exit /b %ERRORLEVEL%
