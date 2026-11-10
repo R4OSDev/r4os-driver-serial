@@ -5,14 +5,14 @@ const resources = @import("resources.zig");
 const Uart = @import("uart.zig").Uart(resources.Access);
 const Guard = @import("lock.zig").Guard;
 const State = struct { next: ?*State, allocation: a.DriverHeapAllocation, registration: u64, number: u32, starting: bool, uart: Uart };
-var api: ?*const a.DriverApi = null;
+var api: ?*const r4os.r4dev.DriverApi2 = null;
 var cpu_heap: ?r4os.r4dev.DriverHeapContext = null;
 var serial: ?r4os.r4dev.DriverSerialContext = null;
 var head: ?*State = null;
 var lines: [32]bool = .{false} ** 32;
 var line_flags: [32]u32 = .{0} ** 32;
 comptime {
-    asm (r4os.r4dev.driverEntriesAsm("serial_init", "serial_shutdown"));
+    if (!@import("builtin").is_test) asm (r4os.technical2.driverEntriesAsm("serial_init", "serial_shutdown"));
 }
 fn state(raw: u64) *State {
     return @ptrFromInt(raw);
@@ -114,7 +114,7 @@ fn irq(number: u8, _: usize) callconv(.c) u32 {
     }
     return if (handled) a.irq_result_handled else 0;
 }
-fn add(ctx: *const r4os.r4dev.DriverContext, declaration: resources.Declaration) i32 {
+fn add(ctx: *const r4os.r4dev.DriverContext2, declaration: resources.Declaration) i32 {
     const heap = cpu_heap orelse return a.serial_error_owner;
     const service = serial orelse return a.serial_error_owner;
     var allocation: a.DriverHeapAllocation = .{};
@@ -194,7 +194,7 @@ fn add(ctx: *const r4os.r4dev.DriverContext, declaration: resources.Declaration)
     }
     return 0;
 }
-fn declarations(ctx: *const r4os.r4dev.DriverContext, text: []const u8, clock: u32) i32 {
+fn declarations(ctx: *const r4os.r4dev.DriverContext2, text: []const u8, clock: u32) i32 {
     if (std.ascii.eqlIgnoreCase(text, "none")) return 0;
     var it = std.mem.splitScalar(u8, text, ',');
     while (it.next()) |entry| {
@@ -205,10 +205,10 @@ fn declarations(ctx: *const r4os.r4dev.DriverContext, text: []const u8, clock: u
     }
     return 0;
 }
-export fn serial_init(input: *const a.DriverApi) callconv(.c) i32 {
+export fn serial_init(input: *const r4os.r4dev.DriverApi2) callconv(.c) i32 {
     api = input;
-    const ctx = r4os.r4dev.DriverContext.init(input);
-    if (!ctx.apiCompatible()) return a.serial_error_unsupported;
+    const ctx = r4os.r4dev.DriverContext2.init(input);
+    if (!ctx.requires(.{ "heap_query", "serial_query", "get_option", "irq_register", "irq_unregister", "port_inb", "port_outb", "pci_device_at", "pci_device_count", "pci_map_bar", "pci_read_bar", "pci_read_config32", "pci_write_config32" })) return a.serial_error_unsupported;
     cpu_heap = ctx.heap() orelse return a.serial_error_unsupported;
     serial = ctx.serial() orelse return a.serial_error_unsupported;
     const raw_clock = std.mem.span(ctx.getOption("SERIAL", "clock"));
@@ -228,10 +228,11 @@ export fn serial_init(input: *const a.DriverApi) callconv(.c) i32 {
 }
 export fn serial_shutdown() callconv(.c) i32 {
     const raw = api orelse return 0;
-    const ctx = r4os.r4dev.DriverContext.init(raw);
+    const ctx = r4os.r4dev.DriverContext2.init(raw);
     const service = serial orelse return 0;
     const heap = cpu_heap orelse return a.serial_error_owner;
-    // Kernel admission is already closed and waits drained before DriverShutdown.
+    // Exact port admission/wait draining belongs to unregister below; generic
+    // module admission closes only after this DriverShutdown acknowledges.
     // A failed unregister/IRQ/heap release leaves the exact remaining list intact.
     var next = head;
     while (next) |s| {
@@ -260,4 +261,100 @@ export fn serial_shutdown() callconv(.c) i32 {
     cpu_heap = null;
     serial = null;
     return 0;
+}
+
+// Exact production Access/Uart and callback bodies with a register peer.
+// Only privileged IF manipulation is excluded by builtin.is_test in Guard.
+const TestPort = struct {
+    var registers: [8]u8 = @splat(0);
+    var stuck = false;
+    var iir_reads: usize = 0;
+    fn input(port: u16) callconv(.c) u8 {
+        const index = port - 0x2f8;
+        if (index == 2) {
+            iir_reads += 1;
+            return if (stuck) 2 else 0xc1;
+        }
+        return registers[index];
+    }
+    fn output(port: u16, value: u8) callconv(.c) void {
+        registers[port - 0x2f8] = value;
+    }
+    fn setup(table: *r4os.r4dev.DriverApi2, node: *State) !void {
+        registers = @splat(0);
+        registers[5] = 0x60;
+        stuck = false;
+        iir_reads = 0;
+        @memset(std.mem.asBytes(table), 0);
+        table.magic = r4os.technical2.abi.driver_magic;
+        table.version = r4os.technical2.abi.driver_version;
+        table.size = @sizeOf(@TypeOf(table.*));
+        table.port_inb = input;
+        table.port_outb = output;
+        node.* = .{ .next = null, .allocation = .{}, .registration = 0, .number = 2, .starting = false, .uart = undefined };
+        node.uart.init(.{ .api = table, .kind = a.serial_resource_io, .base = 0x2f8, .physical = 0x2f8, .bytes = 8, .irq = 3, .irq_flags = 0 });
+        try std.testing.expectEqual(@as(i32, 0), node.uart.open(&.{}));
+    }
+};
+
+test "SERIAL actual write callback reports partial hardware failure and retains UART until physical drain" {
+    var table: r4os.r4dev.DriverApi2 = undefined;
+    var node: State = undefined;
+    try TestPort.setup(&table, &node);
+    TestPort.registers[5] = 0xff;
+    var result: a.SerialTransfer = .{};
+    const rc = writing(@intFromPtr(&node), "ABCD", 4, &result);
+    try std.testing.expectEqual(a.serial_error_hardware, rc);
+    try std.testing.expectEqual(rc, result.status);
+    try std.testing.expectEqual(@as(u32, 4), result.completed);
+    try std.testing.expect(result.flags & a.serial_transfer_partial != 0);
+    try std.testing.expect(node.uart.opened);
+    try std.testing.expectEqualStrings("ABCD", node.uart.tx[0..4]);
+    try std.testing.expectEqual(a.serial_error_hardware, node.uart.close(a.serial_close_abort));
+    try std.testing.expect(node.uart.opened);
+    TestPort.registers[5] = 0x20; // THRE is not the physical TEMT receipt.
+    try std.testing.expectEqual(a.serial_error_would_block, node.uart.close(a.serial_close_abort));
+    try std.testing.expect(node.uart.opened);
+    try std.testing.expectEqual(@as(u64, 4), node.uart.tx_dropped);
+    TestPort.registers[5] = 0x60;
+    try std.testing.expectEqual(@as(i32, 0), node.uart.close(a.serial_close_abort));
+    try std.testing.expect(!node.uart.opened);
+}
+
+test "SERIAL actual read callback retains completed bytes with overflow and exact partial flags" {
+    var table: r4os.r4dev.DriverApi2 = undefined;
+    var node: State = undefined;
+    try TestPort.setup(&table, &node);
+    node.uart.rx[0] = 'Z';
+    node.uart.rh = 1;
+    node.uart.unreported_drop = 3;
+    var bytes: [8]u8 = @splat(0xcd);
+    var result: a.SerialTransfer = .{};
+    const rc = reading(@intFromPtr(&node), &bytes, bytes.len, &result);
+    try std.testing.expectEqual(a.serial_error_overflow, rc);
+    try std.testing.expectEqual(rc, result.status);
+    try std.testing.expectEqual(@as(u32, 1), result.completed);
+    try std.testing.expectEqual(@as(u64, 3), result.overflows);
+    try std.testing.expect(result.flags & (a.serial_transfer_partial | a.serial_transfer_overflow) == a.serial_transfer_partial | a.serial_transfer_overflow);
+    try std.testing.expectEqual(@as(u8, 'Z'), bytes[0]);
+    for (bytes[1..]) |byte| try std.testing.expectEqual(@as(u8, 0xcd), byte);
+    try std.testing.expectEqual(@as(u64, 0), node.uart.unreported_drop);
+}
+
+test "SERIAL stuck IRQ is bounded and disables the source without pretending UART close" {
+    var table: r4os.r4dev.DriverApi2 = undefined;
+    var node: State = undefined;
+    try TestPort.setup(&table, &node);
+    TestPort.stuck = true;
+    TestPort.iir_reads = 0;
+    const result = node.uart.service();
+    try std.testing.expectEqual(@as(usize, 65), TestPort.iir_reads);
+    try std.testing.expect(result.handled and result.events & a.serial_event_error != 0);
+    try std.testing.expect(node.uart.failed and node.uart.opened);
+    try std.testing.expectEqual(@as(u8, 0), TestPort.registers[1]);
+    TestPort.registers[5] = 0x20;
+    try std.testing.expectEqual(a.serial_error_would_block, node.uart.close(0));
+    try std.testing.expect(node.uart.opened);
+    TestPort.registers[5] = 0x60;
+    try std.testing.expectEqual(@as(i32, 0), node.uart.close(0));
 }

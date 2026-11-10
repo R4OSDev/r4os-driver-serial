@@ -2,7 +2,7 @@ const std = @import("std");
 const r4os = @import("r4os");
 const a = r4os.abi;
 pub const Access = struct {
-    api: *const a.DriverApi,
+    api: *const r4os.r4dev.DriverApi2,
     kind: u32,
     base: u64,
     physical: u64,
@@ -17,14 +17,14 @@ pub const Access = struct {
     decode_mask: u32 = 0,
     pub fn activate(self: *const Access) i32 {
         const info = self.pci orelse return 0;
-        const ctx = r4os.r4dev.DriverContext.init(self.api);
+        const ctx = r4os.r4dev.DriverContext2.init(self.api);
         const command = ctx.pciReadConfig32(info, 4) & 0xffff;
         if (command & self.decode_mask == self.decode_mask) return 0;
         return ctx.pciWriteConfig32(info, 4, command | self.decode_mask);
     }
     pub fn read(self: *const Access, index: u8) u8 {
         const off: usize = @as(usize, index) << self.shift;
-        if (self.kind == a.serial_resource_io) return self.api.port_inb(@intCast(self.base + off));
+        if (self.kind == a.serial_resource_io) return r4os.r4dev.DriverContext2.init(self.api).portInb(@intCast(self.base + off));
         if (self.width == 4) {
             const p: *volatile u32 = @ptrFromInt(self.base + off);
             return @truncate(p.*);
@@ -35,7 +35,7 @@ pub const Access = struct {
     pub fn write(self: *const Access, index: u8, value: u8) void {
         const off: usize = @as(usize, index) << self.shift;
         if (self.kind == a.serial_resource_io) {
-            self.api.port_outb(@intCast(self.base + off), value);
+            r4os.r4dev.DriverContext2.init(self.api).portOutb(@intCast(self.base + off), value);
             return;
         }
         if (self.width == 4) {
@@ -57,7 +57,7 @@ fn parseValue(part: ?[]const u8, base: u8) !u32 {
 // A declaration supplies stable logical identity; iteration/free-slot order
 // never supplies COM numbers. PCI resources are mapped only after exact BDF/BAR
 // confirmation; this is deliberately not a universal PCI UART detector.
-pub fn parse(ctx: *const r4os.r4dev.DriverContext, text: []const u8, clock: u32) !Declaration {
+pub fn parse(ctx: *const r4os.r4dev.DriverContext2, text: []const u8, clock: u32) !Declaration {
     var parts = std.mem.splitScalar(u8, text, ':');
     const number = try parseValue(parts.next(), 10);
     const kind = parts.next() orelse return error.InvalidResource;

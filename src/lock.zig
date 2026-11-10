@@ -5,7 +5,7 @@ var owned: u8 = 0;
 pub const Guard = struct {
     flags: u64,
     pub fn acquire() Guard {
-        const flags = asm volatile ("pushfq; popq %[flags]; cli"
+        const flags = if (@import("builtin").is_test) @as(u64, 0) else asm volatile ("pushfq; popq %[flags]; cli"
             : [flags] "=r" (-> u64),
             :
             : .{ .memory = true });

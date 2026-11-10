@@ -11,19 +11,12 @@ pub fn build(b: *std.Build) void {
     const sdk = sdk_build.sdk(b, sdk_dep, .{});
     _ = sdk.addR4MF(b.path("module.R4MF"));
 
-    const guard_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/rx_guard.zig"),
+    const owner = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
-    }) });
-    const run_guard_tests = b.addRunArtifact(guard_tests);
-    const irq_policy_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/irq_policy.zig"),
-        .target = b.graph.host,
-        .optimize = .Debug,
-    }) });
-    const run_irq_policy_tests = b.addRunArtifact(irq_policy_tests);
-    const test_step = b.step("test", "Run RTL8139 RX recovery tests");
-    test_step.dependOn(&run_guard_tests.step);
-    test_step.dependOn(&run_irq_policy_tests.step);
+    });
+    owner.addImport("r4os", sdk.createR4osModule(b.graph.host, .Debug));
+    const tests = b.addRunArtifact(b.addTest(.{ .root_module = owner }));
+    b.step("test", "Check actual SERIAL partial callbacks, bounded IRQ and retained UART close").dependOn(&tests.step);
 }

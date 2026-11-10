@@ -1,10 +1,14 @@
-SERIAL.R4D 0.1.0
+SERIAL.R4D 0.1.1
 
 Rolle und Grenze
 16550-kompatible UARTs liegen in diesem externen Treiber. R4DEV vermittelt
 einen dynamischen Katalog, exklusive prozessgenaue Handles, Abbruch und
 ereignisgesteuerte Warteaufrufe. Es gibt keine feste Grenze von zwei Ports.
-Kernel 0.1.321 / DriverApi 37 und SDK 0.64.35 werden benoetigt.
+DriverInit2/DriverApi2 mit R4DEV:Query2:2 wird benoetigt; qualifizierter
+Stand ist Kernel0.1.474/SDK192. Eigenstaendige Serial-/Heaptabellen bleiben
+bei Revision1. Die Abmeldung drainiert exakte Portaufrufe vor der generischen
+Modulaufnahmesperre. Der bestehende Teststarter prueft nun wirkliche Serial-
+Callbacks/IRQgrenzen/UARTbesitz statt nicht vorhandener RTL8139-Testdateien.
 
 Ressourcen
 Ohne Option werden deklarierte ISA-Ressourcen COM1=3f8/IRQ4, COM2=2f8/IRQ3,

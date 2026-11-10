@@ -180,7 +180,8 @@ pub fn Uart(comptime Bus: type) type {
             if (!self.opened or self.aborting or self.failed) return .{ .events = 0, .handled = false };
             var events: u32 = 0;
             var n: usize = 0;
-            while (n < 64) : (n += 1) {
+            var budget = @import("r4os").driver_poll_budget.DriverPollBudget.initIterations(64, .irq);
+            while (budget.step(null, false) == .proceed) : (n += 1) {
                 const iir = self.bus.read(2);
                 if (iir & 1 != 0) break;
                 switch (iir & 0x0e) {
