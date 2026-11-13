@@ -3,6 +3,6 @@
     .version = "0.1.0",
     .fingerprint = 0xa917c82b6f6ed412,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{ .r4os_sdk = .{ .url = "https://github.com/R4OSDev/r4os-sdk/archive/ec82f108eb1874b65e0417140d177c7f90b65fbe.tar.gz", .hash = "r4os_sdk-0.64.208-NnPzAk5RDgI6OsmEJb6HoO-I_uEY5Rb9EoTIziicUnvP" } },
+    .dependencies = .{ .r4os_sdk = .{ .url = "https://github.com/R4OSDev/r4os-sdk/archive/2de035e42ee40982f344a1e8d76f8dd925fd9057.tar.gz", .hash = "r4os_sdk-0.64.208-NnPzAk5RDgI6OsmEJb6HoO-I_uEY5Rb9EoTIziicUnvP" } },
     .paths = .{ "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "README.md", "DOCUMENTATION.de.txt", "build.zig", "build.zig.zon", "module.R4MF", "src" },
 }
